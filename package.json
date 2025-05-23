@@ -16,7 +16,7 @@
     "overlay",
     "windows"
   ],
-  "author": "Your Name",
+  "author": "HaitamElb",
   "license": "MIT",
   "devDependencies": {
     "electron": "^28.1.0",
@@ -27,7 +27,7 @@
     "lagdetector": "file:"
   },
   "build": {
-    "appId": "com.yourname.lagdetector",
+    "appId": "com.haitamelb.lagdetector",
     "productName": "Network Latency Monitor",
     "directories": {
       "output": "dist"
