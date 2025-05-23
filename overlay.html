@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Network Latency Monitor</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 10px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+        background: rgba(0, 0, 0, 0.7);
+        color: white;
+        overflow: hidden;
+        user-select: none;
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+      }
+
+      .container {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .app-stats {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 8px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      .app-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .app-name {
+        font-size: 13px;
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.9);
+      }
+
+      .latency {
+        font-size: 13px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-weight: 500;
+      }
+
+      .latency.good {
+        background: rgba(52, 199, 89, 0.2);
+        color: #34c759;
+      }
+
+      .latency.warning {
+        background: rgba(255, 204, 0, 0.2);
+        color: #ffd60a;
+      }
+
+      .latency.critical {
+        background: rgba(255, 59, 48, 0.2);
+        color: #ff3b30;
+      }
+
+      .connection-details {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.6);
+        margin-left: 8px;
+        display: none;
+      }
+
+      .connection-details.visible {
+        display: block;
+      }
+
+      .connection-item {
+        display: flex;
+        justify-content: space-between;
+        margin: 2px 0;
+        padding: 4px 8px;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .connection-address {
+        color: rgba(255, 255, 255, 0.8);
+        font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas,
+          Liberation Mono, monospace;
+      }
+
+      .connection-dns {
+        color: rgba(255, 255, 255, 0.5);
+        font-style: italic;
+        font-size: 11px;
+        margin-left: 8px;
+      }
+
+      .drag-handle {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 20px;
+        cursor: move;
+        background: rgba(255, 255, 255, 0.05);
+        display: none;
+        border-top-left-radius: 12px;
+        border-top-right-radius: 12px;
+      }
+
+      body:hover .drag-handle {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="drag-handle"></div>
+    <div class="container" id="stats-container"></div>
+
+    <script>
+      const { ipcRenderer } = require("electron");
+      let viewMode = "simple";
+
+      // Handle initial settings
+      ipcRenderer.on("initial-settings", (event, settings) => {
+        viewMode = settings.viewMode || "simple";
+        updateViewMode();
+      });
+
+      // Handle settings updates
+      ipcRenderer.on("settings-updated", (event, settings) => {
+        viewMode = settings.viewMode || "simple";
+        updateViewMode();
+      });
+
+      function updateViewMode() {
+        const details = document.querySelectorAll(".connection-details");
+        details.forEach((detail) => {
+          if (viewMode === "detailed") {
+            detail.classList.add("visible");
+          } else {
+            detail.classList.remove("visible");
+          }
+        });
+      }
+
+      // Handle network stats updates
+      ipcRenderer.on("network-stats", (event, stats) => {
+        const container = document.getElementById("stats-container");
+        container.innerHTML = "";
+
+        Object.values(stats).forEach((app) => {
+          const appElement = document.createElement("div");
+          appElement.className = "app-stats";
+
+          const header = document.createElement("div");
+          header.className = "app-header";
+
+          const nameSpan = document.createElement("span");
+          nameSpan.className = "app-name";
+          nameSpan.textContent = app.name;
+
+          const latencySpan = document.createElement("span");
+          latencySpan.className = `latency ${getLatencyClass(app.latency)}`;
+          latencySpan.textContent = `${app.latency}ms`;
+
+          header.appendChild(nameSpan);
+          header.appendChild(latencySpan);
+          appElement.appendChild(header);
+
+          if (app.addresses) {
+            const details = document.createElement("div");
+            details.className = `connection-details ${
+              viewMode === "detailed" ? "visible" : ""
+            }`;
+
+            app.addresses.forEach((addr) => {
+              const connItem = document.createElement("div");
+              connItem.className = "connection-item";
+
+              const addrSpan = document.createElement("span");
+              addrSpan.className = "connection-address";
+              addrSpan.textContent = `${addr.ip}:${addr.port}`;
+
+              connItem.appendChild(addrSpan);
+
+              if (addr.name) {
+                const dnsSpan = document.createElement("span");
+                dnsSpan.className = "connection-dns";
+                dnsSpan.textContent = addr.name;
+                connItem.appendChild(dnsSpan);
+              }
+
+              details.appendChild(connItem);
+            });
+
+            appElement.appendChild(details);
+          }
+
+          container.appendChild(appElement);
+        });
+
+        // Update container size
+        ipcRenderer.send("update-overlay-size", {
+          height: container.offsetHeight,
+        });
+      });
+
+      function getLatencyClass(latency) {
+        if (latency < 50) return "good";
+        if (latency < 100) return "warning";
+        return "critical";
+      }
+
+      // Handle window dragging
+      const dragHandle = document.querySelector(".drag-handle");
+      let isDragging = false;
+
+      dragHandle.addEventListener("mousedown", () => {
+        isDragging = true;
+        ipcRenderer.send("drag-window");
+      });
+
+      document.addEventListener("mouseup", () => {
+        if (isDragging) {
+          isDragging = false;
+          ipcRenderer.send("end-drag-window");
+        }
+      });
+
+      document.addEventListener("mouseleave", () => {
+        if (isDragging) {
+          isDragging = false;
+          ipcRenderer.send("end-drag-window");
+        }
+      });
+    </script>
+  </body>
+</html>

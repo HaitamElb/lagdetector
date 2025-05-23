@@ -1,0 +1,46 @@
+{
+  "name": "lagdetector",
+  "productName": "Network Latency Monitor",
+  "version": "1.0.0",
+  "description": "Monitor network latency for your applications in real-time",
+  "main": "main.js",
+  "scripts": {
+    "start": "set NODE_ENV=development && electron .",
+    "build": "electron-builder",
+    "pack": "electron-builder --dir",
+    "dist": "set NODE_ENV=production && electron-builder"
+  },
+  "keywords": [
+    "network",
+    "latency",
+    "overlay",
+    "windows"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1"
+  },
+  "dependencies": {
+    "electron-store": "^10.0.1",
+    "lagdetector": "file:"
+  },
+  "build": {
+    "appId": "com.yourname.lagdetector",
+    "productName": "Network Latency Monitor",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "runAfterFinish": true
+    }
+  }
+}
