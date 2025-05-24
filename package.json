@@ -30,8 +30,13 @@
     "appId": "com.haitamelb.lagdetector",
     "productName": "Network Latency Monitor",
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "build"
     },
+    "files": [
+      "**/*",
+      "build/icon.*"
+    ],
     "win": {
       "target": "nsis",
       "icon": "build/icon.ico"

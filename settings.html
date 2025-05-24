@@ -213,6 +213,50 @@
       ::-webkit-scrollbar-thumb:hover {
         background: rgba(255, 255, 255, 0.25);
       }
+
+      .shortcuts-section {
+        margin-top: 24px;
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      .shortcut-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px;
+        margin: 8px 0;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      .shortcut-label {
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 14px;
+      }
+
+      .shortcut-key {
+        padding: 6px 12px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 4px;
+        color: rgba(255, 255, 255, 0.8);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .shortcut-key:hover {
+        background: rgba(255, 255, 255, 0.15);
+      }
+
+      .shortcut-key.recording {
+        background: rgba(0, 122, 255, 0.2);
+        border: 1px solid rgba(0, 122, 255, 0.3);
+      }
     </style>
   </head>
   <body>
@@ -265,6 +309,72 @@
         </div>
       </div>
 
+      <div class="setting-group">
+        <label>Keyboard Shortcuts</label>
+        <div class="shortcuts-section">
+          <div class="shortcut-item">
+            <span class="shortcut-label">Toggle Overlay</span>
+            <div class="shortcut-key" data-action="toggle-overlay">
+              Ctrl+Shift+O
+            </div>
+          </div>
+          <div class="shortcut-item">
+            <span class="shortcut-label">Top Left</span>
+            <div class="shortcut-key" data-action="position-7">
+              Ctrl+Shift+7
+            </div>
+          </div>
+          <div class="shortcut-item">
+            <span class="shortcut-label">Top Center</span>
+            <div class="shortcut-key" data-action="position-8">
+              Ctrl+Shift+8
+            </div>
+          </div>
+          <div class="shortcut-item">
+            <span class="shortcut-label">Top Right</span>
+            <div class="shortcut-key" data-action="position-9">
+              Ctrl+Shift+9
+            </div>
+          </div>
+          <div class="shortcut-item">
+            <span class="shortcut-label">Middle Left</span>
+            <div class="shortcut-key" data-action="position-4">
+              Ctrl+Shift+4
+            </div>
+          </div>
+          <div class="shortcut-item">
+            <span class="shortcut-label">Center</span>
+            <div class="shortcut-key" data-action="position-5">
+              Ctrl+Shift+5
+            </div>
+          </div>
+          <div class="shortcut-item">
+            <span class="shortcut-label">Middle Right</span>
+            <div class="shortcut-key" data-action="position-6">
+              Ctrl+Shift+6
+            </div>
+          </div>
+          <div class="shortcut-item">
+            <span class="shortcut-label">Bottom Left</span>
+            <div class="shortcut-key" data-action="position-1">
+              Ctrl+Shift+1
+            </div>
+          </div>
+          <div class="shortcut-item">
+            <span class="shortcut-label">Bottom Center</span>
+            <div class="shortcut-key" data-action="position-2">
+              Ctrl+Shift+2
+            </div>
+          </div>
+          <div class="shortcut-item">
+            <span class="shortcut-label">Bottom Right</span>
+            <div class="shortcut-key" data-action="position-3">
+              Ctrl+Shift+3
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="status-message" id="status-message"></div>
 
       <div class="button-group">
@@ -276,6 +386,8 @@
     <script>
       const { ipcRenderer } = require("electron");
       let currentSettings = {};
+      let isRecordingShortcut = false;
+      let currentRecordingElement = null;
 
       // Load initial settings
       ipcRenderer.on("load-settings", (event, settings) => {
@@ -301,6 +413,16 @@
             el.classList.add("selected");
           }
         });
+
+        // Set shortcuts
+        if (settings.shortcuts) {
+          document.querySelectorAll(".shortcut-key").forEach((el) => {
+            const action = el.dataset.action;
+            if (settings.shortcuts[action]) {
+              el.textContent = settings.shortcuts[action];
+            }
+          });
+        }
       });
 
       // Handle opacity changes
@@ -340,7 +462,83 @@
         });
       });
 
-      // Save settings
+      // Add shortcut recording functionality
+      document.querySelectorAll(".shortcut-key").forEach((el) => {
+        el.addEventListener("click", (e) => {
+          if (isRecordingShortcut) {
+            // Stop recording any other shortcut
+            if (
+              currentRecordingElement &&
+              currentRecordingElement !== e.target
+            ) {
+              currentRecordingElement.classList.remove("recording");
+            }
+          }
+
+          e.target.classList.add("recording");
+          e.target.textContent = "Press keys...";
+          isRecordingShortcut = true;
+          currentRecordingElement = e.target;
+          e.stopPropagation();
+        });
+      });
+
+      // Handle key recording
+      document.addEventListener("keydown", (e) => {
+        if (!isRecordingShortcut || !currentRecordingElement) return;
+
+        e.preventDefault();
+
+        const keys = [];
+        if (e.ctrlKey) keys.push("Ctrl");
+        if (e.shiftKey) keys.push("Shift");
+        if (e.altKey) keys.push("Alt");
+        if (e.metaKey) keys.push("Super");
+
+        // Add the main key if it's not a modifier
+        const key = e.key.toLowerCase();
+        if (!["control", "shift", "alt", "meta"].includes(key)) {
+          keys.push(e.key.toUpperCase());
+        }
+
+        if (keys.length > 0) {
+          const shortcut = keys.join("+");
+          currentRecordingElement.textContent = shortcut;
+          currentRecordingElement.classList.remove("recording");
+          isRecordingShortcut = false;
+          currentRecordingElement = null;
+        }
+      });
+
+      // Stop recording when clicking outside
+      document.addEventListener("click", (e) => {
+        if (
+          isRecordingShortcut &&
+          !e.target.classList.contains("shortcut-key")
+        ) {
+          if (currentRecordingElement) {
+            // Restore the previous shortcut from settings
+            const action = currentRecordingElement.dataset.action;
+            const shortcut =
+              currentSettings.shortcuts?.[action] || getDefaultShortcut(action);
+            currentRecordingElement.textContent = shortcut;
+            currentRecordingElement.classList.remove("recording");
+          }
+          isRecordingShortcut = false;
+          currentRecordingElement = null;
+        }
+      });
+
+      function getDefaultShortcut(action) {
+        if (action === "toggle-overlay") return "Ctrl+Shift+O";
+        if (action.startsWith("position-")) {
+          const num = action.split("-")[1];
+          return `Ctrl+Shift+${num}`;
+        }
+        return "";
+      }
+
+      // Update saveSettings function
       function saveSettings() {
         const opacity = parseFloat(document.getElementById("opacity").value);
         const position = document.querySelector(".position-option.selected")
@@ -348,10 +546,17 @@
         const viewMode = document.querySelector(".view-mode-option.selected")
           .dataset.mode;
 
+        // Collect shortcuts
+        const shortcuts = {};
+        document.querySelectorAll(".shortcut-key").forEach((el) => {
+          shortcuts[el.dataset.action] = el.textContent;
+        });
+
         const newSettings = {
           opacity,
           position,
           viewMode,
+          shortcuts,
         };
 
         ipcRenderer.send("save-settings", newSettings);

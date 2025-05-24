@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, screen, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, screen, shell, Tray, Menu } = require('electron');
 const { exec, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -26,6 +26,7 @@ let settingsWindow = null;
 let lastStats = null;
 let allWindows = new Set();
 let isAppQuitting = false;
+let tray = null;
 
 // Near the top of the file, add:
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
@@ -111,12 +112,52 @@ function closeAllWindows() {
 // Add this function to handle app quit properly
 function quitApp() {
     isAppQuitting = true;
+
+    // Clear all intervals
     if (monitoringInterval) {
         clearInterval(monitoringInterval);
         monitoringInterval = null;
     }
-    closeAllWindows();
-    app.quit();
+
+    // Unregister all shortcuts
+    try {
+        globalShortcut.unregisterAll();
+    } catch (error) {
+        console.error('Error unregistering shortcuts:', error);
+    }
+
+    // Destroy tray
+    if (tray) {
+        try {
+            tray.destroy();
+            tray = null;
+        } catch (error) {
+            console.error('Error destroying tray:', error);
+        }
+    }
+
+    // Close all windows
+    BrowserWindow.getAllWindows().forEach(window => {
+        try {
+            if (!window.isDestroyed()) {
+                window.destroy();
+            }
+        } catch (error) {
+            console.error('Error closing window:', error);
+        }
+    });
+
+    // Clear any stored data
+    selectedApps.clear();
+    allWindows.clear();
+
+    // Force quit the app
+    try {
+        app.exit(0);
+    } catch (error) {
+        console.error('Error exiting app:', error);
+        process.exit(0);
+    }
 }
 
 async function createMainWindow() {
@@ -158,6 +199,24 @@ async function createMainWindow() {
     ipcMain.on('show-settings', () => {
         createSettingsWindow();
     });
+
+    // Add these event handlers
+    mainWindow.on('close', (event) => {
+        if (!isAppQuitting) {
+            event.preventDefault();
+            mainWindow.hide();
+        }
+    });
+
+    mainWindow.on('minimize', (event) => {
+        event.preventDefault();
+        mainWindow.hide();
+    });
+
+    // Add this handler for when the window is closed
+    mainWindow.on('closed', () => {
+        mainWindow = null;
+    });
 }
 
 async function createOverlayWindow() {
@@ -184,20 +243,22 @@ async function createOverlayWindow() {
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false
-        }
+        },
+        type: 'toolbar',
+        focusable: false
     });
 
+    overlayWindow.setAlwaysOnTop(true, 'screen-saver');
+    overlayWindow.setVisibleOnAllWorkspaces(true);
     overlayWindow.setIgnoreMouseEvents(true);
     overlayWindow.loadFile('overlay.html');
     trackWindow(overlayWindow);
 
-    // Send initial settings when overlay loads
     overlayWindow.webContents.on('did-finish-load', () => {
         const settings = store.get('settings') || {};
         overlayWindow.webContents.send('initial-settings', settings);
     });
 
-    // Save overlay position when moved
     overlayWindow.on('moved', () => {
         const currentBounds = overlayWindow.getBounds();
         if (currentBounds && typeof currentBounds === 'object') {
@@ -205,8 +266,8 @@ async function createOverlayWindow() {
         }
     });
 
-    // When overlay closes, clean up everything
     overlayWindow.on('closed', () => {
+        overlayWindow = null;
         if (!isAppQuitting) {
             quitApp();
         }
@@ -215,29 +276,56 @@ async function createOverlayWindow() {
 
 // Register global shortcut
 function registerShortcuts() {
-    // Toggle overlay visibility with Ctrl+Shift+O
-    globalShortcut.register('CommandOrControl+Shift+O', () => {
-        toggleOverlay();
-    });
+    // Unregister existing shortcuts first
+    globalShortcut.unregisterAll();
 
-    // Move overlay to different corners with Ctrl+Shift+[1-9]
+    const settings = store.get('settings') || {};
+    const shortcuts = settings.shortcuts || {};
+
+    // Register toggle overlay shortcut
+    const toggleShortcut = shortcuts['toggle-overlay'] || 'CommandOrControl+Shift+O';
+    try {
+        globalShortcut.register(normalizeShortcut(toggleShortcut), () => {
+            toggleOverlay();
+        });
+    } catch (error) {
+        console.error('Failed to register toggle shortcut:', error);
+    }
+
+    // Register position shortcuts
     const corners = {
-        '1': 'bottomLeft',
-        '2': 'bottomCenter',
-        '3': 'bottomRight',
-        '4': 'middleLeft',
-        '5': 'center',
-        '6': 'middleRight',
-        '7': 'topLeft',
-        '8': 'topCenter',
-        '9': 'topRight'
+        'position-1': 'bottomLeft',
+        'position-2': 'bottomCenter',
+        'position-3': 'bottomRight',
+        'position-4': 'middleLeft',
+        'position-5': 'center',
+        'position-6': 'middleRight',
+        'position-7': 'topLeft',
+        'position-8': 'topCenter',
+        'position-9': 'topRight'
     };
 
-    Object.entries(corners).forEach(([key, position]) => {
-        globalShortcut.register(`CommandOrControl+Shift+${key}`, () => {
-            moveOverlayToPosition(position);
-        });
+    Object.entries(corners).forEach(([action, position]) => {
+        const shortcut = shortcuts[action] || `CommandOrControl+Shift+${action.split('-')[1]}`;
+        try {
+            globalShortcut.register(normalizeShortcut(shortcut), () => {
+                moveOverlayToPosition(position);
+            });
+        } catch (error) {
+            console.error(`Failed to register position shortcut ${action}:`, error);
+        }
     });
+}
+
+// Add helper function to normalize shortcuts
+function normalizeShortcut(shortcut) {
+    return shortcut
+        .replace(/Ctrl/gi, 'CommandOrControl')
+        .replace(/\+/g, '+')
+        .replace(/\s+/g, '')
+        .replace(/Super/gi, 'Super')
+        .replace(/Alt/gi, 'Alt')
+        .replace(/Shift/gi, 'Shift');
 }
 
 function moveOverlayToPosition(position) {
@@ -316,23 +404,36 @@ function toggleOverlay() {
     } else {
         overlayWindow.hide();
     }
-    mainWindow.webContents.send('overlay-state', isOverlayVisible);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('overlay-state', isOverlayVisible);
+    }
 }
 
-// Replace the checkAdminPermissions function
+// Update checkAdminPermissions function
 async function checkAdminPermissions() {
     try {
-        // Try to execute a command that requires admin rights
+        // First check if we have stored admin status
+        const storedStatus = store.get('adminPermissions');
+        if (storedStatus) {
+            hasAdminPermissions = true;
+            notifyWindowsAboutPermissions();
+            return true;
+        }
+
+        // If no stored status, check current permissions
         execSync('net session', { stdio: 'ignore' });
         hasAdminPermissions = true;
+        store.set('adminPermissions', true);
     } catch (e) {
         hasAdminPermissions = false;
+        store.delete('adminPermissions');
     }
 
-    // Store permission status
-    store.set('adminPermissions', hasAdminPermissions);
+    notifyWindowsAboutPermissions();
+    return hasAdminPermissions;
+}
 
-    // Notify windows about permission status
+function notifyWindowsAboutPermissions() {
     BrowserWindow.getAllWindows().forEach(win => {
         if (!win.isDestroyed()) {
             win.webContents.send('admin-status', {
@@ -341,11 +442,9 @@ async function checkAdminPermissions() {
             });
         }
     });
-
-    return hasAdminPermissions;
 }
 
-// Replace the permission request handler
+// Update permission request handler
 ipcMain.on('request-permissions', async () => {
     try {
         if (isDev) {
@@ -362,17 +461,12 @@ ipcMain.on('request-permissions', async () => {
             });
         }
         
-        // Quit the current instance
+        // Clear stored permissions before quitting
+        store.delete('adminPermissions');
         app.quit();
     } catch (error) {
         console.error('Failed to request admin permissions:', error);
-        BrowserWindow.getAllWindows().forEach(win => {
-            if (!win.isDestroyed()) {
-                win.webContents.send('permissions-denied', {
-                    error: 'Failed to get admin permissions. Please try running the app as administrator.'
-                });
-            }
-        });
+        notifyWindowsAboutPermissions();
     }
 });
 
@@ -598,7 +692,7 @@ app.whenReady().then(async () => {
         await new Promise(resolve => setTimeout(resolve, 100));
     }
     
-    // Create overlay first as it's our main window
+    createTray();
     await createOverlayWindow();
     await createMainWindow();
     registerShortcuts();
@@ -609,12 +703,39 @@ app.whenReady().then(async () => {
     }
 });
 
-app.on('will-quit', () => {
+// Update the app quit handling
+app.on('before-quit', () => {
+    isAppQuitting = true;
+});
+
+// Update window-all-closed handler
+app.on('window-all-closed', () => {
+    isAppQuitting = true;
     quitApp();
 });
 
-app.on('window-all-closed', () => {
-    quitApp();
+// Add force quit handler
+app.on('quit', () => {
+    if (monitoringInterval) {
+        clearInterval(monitoringInterval);
+        monitoringInterval = null;
+    }
+    if (tray) {
+        tray.destroy();
+        tray = null;
+    }
+    globalShortcut.unregisterAll();
+    
+    // Force close any remaining windows
+    BrowserWindow.getAllWindows().forEach(window => {
+        try {
+            if (!window.isDestroyed()) {
+                window.destroy();
+            }
+        } catch (error) {
+            console.error('Error closing window:', error);
+        }
+    });
 });
 
 app.on('activate', () => {
@@ -632,27 +753,29 @@ function createSettingsWindow() {
     }
 
     settingsWindow = new BrowserWindow({
-        width: 800,
-        height: 700,
-        frame: true,
+        width: 400,
+        height: 500,
+        frame: false,
+        transparent: true,
         resizable: false,
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false
-        }
+        },
+        parent: mainWindow,
+        modal: true
     });
 
     settingsWindow.loadFile('settings.html');
     trackWindow(settingsWindow);
 
-    settingsWindow.on('closed', () => {
-        settingsWindow = null;
-    });
-
-    // Load settings
     settingsWindow.webContents.on('did-finish-load', () => {
         const settings = store.get('settings') || {};
         settingsWindow.webContents.send('load-settings', settings);
+    });
+
+    settingsWindow.on('closed', () => {
+        settingsWindow = null;
     });
 }
 
@@ -693,7 +816,6 @@ ipcMain.on('set-opacity', (event, opacity) => {
 
 ipcMain.on('save-settings', async (event, newSettings) => {
     try {
-        // Make sure store is initialized
         if (!store) {
             throw new Error('Store not initialized');
         }
@@ -703,6 +825,11 @@ ipcMain.on('save-settings', async (event, newSettings) => {
             ...store.get('settings', {}),
             ...newSettings
         });
+
+        // Re-register shortcuts if they changed
+        if (newSettings.shortcuts) {
+            registerShortcuts();
+        }
 
         // Notify all windows about the settings change
         BrowserWindow.getAllWindows().forEach(win => {
@@ -721,7 +848,6 @@ ipcMain.on('save-settings', async (event, newSettings) => {
             }
         }
 
-        // Send success response
         event.reply('settings-saved', { success: true });
     } catch (error) {
         console.error('Failed to save settings:', error);
@@ -762,4 +888,57 @@ ipcMain.on('check-updates', async (event) => {
     currentVersion: app.getVersion(),
     isLatest: true
   });
-}); 
+});
+
+function createTray() {
+    let iconPath;
+    try {
+        // Try to use the app icon first
+        iconPath = path.join(__dirname, 'build/icon.ico');
+        if (!fs.existsSync(iconPath)) {
+            // If .ico doesn't exist, check for .svg
+            const svgPath = path.join(__dirname, 'build/icon.svg');
+            if (fs.existsSync(svgPath)) {
+                iconPath = svgPath;
+            } else {
+                // If no custom icon exists, use electron's default
+                iconPath = path.join(process.resourcesPath, 'electron.asar/default_app/icon.png');
+            }
+        }
+    } catch (error) {
+        console.error('Error finding icon:', error);
+        // Fallback to electron's default icon
+        iconPath = path.join(process.resourcesPath, 'electron.asar/default_app/icon.png');
+    }
+
+    try {
+        tray = new Tray(iconPath);
+        const contextMenu = Menu.buildFromTemplate([
+            { label: 'Show/Hide Window', click: () => toggleMainWindow() },
+            { label: 'Show/Hide Overlay', click: () => toggleOverlay() },
+            { type: 'separator' },
+            { label: 'Settings', click: () => createSettingsWindow() },
+            { type: 'separator' },
+            { label: 'Quit', click: () => quitApp() }
+        ]);
+        
+        tray.setToolTip('Network Latency Monitor');
+        tray.setContextMenu(contextMenu);
+        
+        // Double click shows/hides the main window
+        tray.on('double-click', () => toggleMainWindow());
+    } catch (error) {
+        console.error('Failed to create tray:', error);
+        // Don't throw error, just log it - app can function without tray
+    }
+}
+
+function toggleMainWindow() {
+    if (!mainWindow) return;
+    if (mainWindow.isVisible()) {
+        mainWindow.hide();
+    } else {
+        mainWindow.show();
+        mainWindow.focus();
+    }
+} 

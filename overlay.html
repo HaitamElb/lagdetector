@@ -1,36 +1,31 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>Network Latency Monitor</title>
+    <title>Network Stats Overlay</title>
     <style>
       body {
         margin: 0;
-        padding: 10px;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-          Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
-        background: rgba(0, 0, 0, 0.7);
+        padding: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+          "Segoe UI", Roboto, sans-serif;
         color: white;
         overflow: hidden;
-        user-select: none;
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px;
+        background: transparent;
       }
 
       .container {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
+        padding: 8px;
+        min-width: 200px;
+        background: transparent;
       }
 
       .app-stats {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        padding: 8px;
+        margin-bottom: 4px;
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
         border-radius: 8px;
-        background: rgba(255, 255, 255, 0.05);
+        overflow: hidden;
+        background: rgba(0, 0, 0, 0.65);
         border: 1px solid rgba(255, 255, 255, 0.1);
       }
 
@@ -38,67 +33,69 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
+        padding: 6px 10px;
+        font-size: 12px;
+        letter-spacing: -0.2px;
       }
 
       .app-name {
-        font-size: 13px;
         font-weight: 500;
         color: rgba(255, 255, 255, 0.9);
       }
 
       .latency {
-        font-size: 13px;
-        padding: 2px 8px;
+        padding: 2px 6px;
         border-radius: 4px;
+        font-variant-numeric: tabular-nums;
         font-weight: 500;
+        font-size: 11px;
       }
 
       .latency.good {
-        background: rgba(52, 199, 89, 0.2);
-        color: #34c759;
+        background: rgba(48, 209, 88, 0.2);
+        color: rgb(48, 209, 88);
       }
 
-      .latency.warning {
-        background: rgba(255, 204, 0, 0.2);
-        color: #ffd60a;
+      .latency.medium {
+        background: rgba(255, 159, 10, 0.2);
+        color: rgb(255, 159, 10);
       }
 
-      .latency.critical {
-        background: rgba(255, 59, 48, 0.2);
-        color: #ff3b30;
+      .latency.high {
+        background: rgba(255, 69, 58, 0.2);
+        color: rgb(255, 69, 58);
       }
 
       .connection-details {
-        font-size: 12px;
-        color: rgba(255, 255, 255, 0.6);
-        margin-left: 8px;
-        display: none;
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.2s ease-out;
+        background: rgba(255, 255, 255, 0.03);
+        font-size: 11px;
       }
 
       .connection-details.visible {
-        display: block;
+        max-height: 200px;
+        padding: 4px 0;
       }
 
       .connection-item {
         display: flex;
         justify-content: space-between;
-        margin: 2px 0;
-        padding: 4px 8px;
-        border-radius: 4px;
-        background: rgba(255, 255, 255, 0.03);
+        padding: 2px 10px;
+        color: rgba(255, 255, 255, 0.7);
       }
 
       .connection-address {
-        color: rgba(255, 255, 255, 0.8);
-        font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas,
-          Liberation Mono, monospace;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10px;
       }
 
       .connection-dns {
-        color: rgba(255, 255, 255, 0.5);
+        color: rgba(255, 255, 255, 0.4);
         font-style: italic;
-        font-size: 11px;
-        margin-left: 8px;
+        font-size: 10px;
+        margin-left: 6px;
       }
 
       .drag-handle {
@@ -106,16 +103,15 @@
         top: 0;
         left: 0;
         width: 100%;
-        height: 20px;
+        height: 16px;
         cursor: move;
-        background: rgba(255, 255, 255, 0.05);
-        display: none;
-        border-top-left-radius: 12px;
-        border-top-right-radius: 12px;
+        opacity: 0;
+        transition: opacity 0.2s ease;
       }
 
       body:hover .drag-handle {
-        display: block;
+        opacity: 1;
+        background: rgba(255, 255, 255, 0.05);
       }
     </style>
   </head>
@@ -150,12 +146,29 @@
         });
       }
 
+      function getLatencyClass(latency) {
+        if (latency < 50) return "good";
+        if (latency < 100) return "medium";
+        return "high";
+      }
+
       // Handle network stats updates
       ipcRenderer.on("network-stats", (event, stats) => {
         const container = document.getElementById("stats-container");
         container.innerHTML = "";
 
-        Object.values(stats).forEach((app) => {
+        // Only show stats for selected apps
+        const selectedApps = Object.values(stats).filter(
+          (app) => app && app.name
+        );
+
+        if (selectedApps.length === 0) {
+          container.style.display = "none";
+          return;
+        }
+
+        container.style.display = "block";
+        selectedApps.forEach((app) => {
           const appElement = document.createElement("div");
           appElement.className = "app-stats";
 
@@ -174,11 +187,9 @@
           header.appendChild(latencySpan);
           appElement.appendChild(header);
 
-          if (app.addresses) {
+          if (app.addresses && viewMode === "detailed") {
             const details = document.createElement("div");
-            details.className = `connection-details ${
-              viewMode === "detailed" ? "visible" : ""
-            }`;
+            details.className = "connection-details visible";
 
             app.addresses.forEach((addr) => {
               const connItem = document.createElement("div");
@@ -210,35 +221,6 @@
         ipcRenderer.send("update-overlay-size", {
           height: container.offsetHeight,
         });
-      });
-
-      function getLatencyClass(latency) {
-        if (latency < 50) return "good";
-        if (latency < 100) return "warning";
-        return "critical";
-      }
-
-      // Handle window dragging
-      const dragHandle = document.querySelector(".drag-handle");
-      let isDragging = false;
-
-      dragHandle.addEventListener("mousedown", () => {
-        isDragging = true;
-        ipcRenderer.send("drag-window");
-      });
-
-      document.addEventListener("mouseup", () => {
-        if (isDragging) {
-          isDragging = false;
-          ipcRenderer.send("end-drag-window");
-        }
-      });
-
-      document.addEventListener("mouseleave", () => {
-        if (isDragging) {
-          isDragging = false;
-          ipcRenderer.send("end-drag-window");
-        }
       });
     </script>
   </body>
