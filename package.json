@@ -23,8 +23,7 @@
     "electron-builder": "^24.9.1"
   },
   "dependencies": {
-    "electron-store": "^10.0.1",
-    "lagdetector": "file:"
+    "electron-store": "^10.0.1"
   },
   "build": {
     "appId": "com.haitamelb.lagdetector",
